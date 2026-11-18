@@ -1,8 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Camera,
   Check,
   FileText,
+  History,
   ImagePlus,
   Loader2,
   Play,
@@ -16,7 +17,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { Player, PlayerStatus, SavedGroupMember } from '../types/smashboard';
+import type { MatchRecord, Player, PlayerStatus, SavedGroupMember } from '../types/smashboard';
 import {
   compressAvatarImage,
   createPlayer,
@@ -24,9 +25,12 @@ import {
   pickRandomAvatarColor,
 } from '../utils/storage';
 import { PlayerAvatar } from './PlayerAvatar';
+import { PlayerHistoryModal } from './PlayerHistoryModal';
 
 interface PlayersTabProps {
   players: Player[];
+  matchHistory: MatchRecord[];
+  allTimeMatchHistory: MatchRecord[];
   savedGroup: SavedGroupMember[];
   onCourtPlayerIds: Set<string>;
   currentCourtMatch?: { teamAIds: [string, string]; teamBIds: [string, string] } | null;
@@ -47,6 +51,8 @@ interface PlayersTabProps {
 
 export const PlayersTab: React.FC<PlayersTabProps> = ({
   players,
+  matchHistory,
+  allTimeMatchHistory,
   savedGroup,
   onCourtPlayerIds,
   currentCourtMatch,
@@ -82,6 +88,12 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
+
+  const historyPlayer = useMemo(
+    () => players.find((p) => p.id === historyPlayerId) ?? null,
+    [players, historyPlayerId]
+  );
 
   const fileImportRef = useRef<HTMLInputElement | null>(null);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
@@ -513,11 +525,28 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                     )}
 
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400 font-mono-tabular">
-                      <span>Main {player.gamesPlayedSession}x</span>
+                      <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+                        Main {player.gamesPlayedSession}x
+                      </span>
+                      {player.allTimeGames > player.gamesPlayedSession && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>Total {player.allTimeGames}x</span>
+                        </>
+                      )}
                       <span aria-hidden="true">·</span>
                       <span>
                         {player.winsSession}M - {player.lossesSession}K
                       </span>
+                      <span aria-hidden="true">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setHistoryPlayerId(player.id)}
+                        className="inline-flex items-center gap-1 text-zinc-700 dark:text-zinc-200 hover:underline font-sans font-semibold"
+                      >
+                        <History className="w-3 h-3" />
+                        Histori
+                      </button>
                       {isOnCourt && (
                         <>
                           <span aria-hidden="true">·</span>
@@ -884,6 +913,12 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
           </div>
         </div>
       )}
+      <PlayerHistoryModal
+        player={historyPlayer}
+        sessionMatches={matchHistory}
+        allTimeMatches={allTimeMatchHistory}
+        onClose={() => setHistoryPlayerId(null)}
+      />
     </div>
   );
 };

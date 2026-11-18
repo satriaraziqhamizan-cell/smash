@@ -340,15 +340,16 @@ export function prosesRotasiSetelahPertandingan(
       };
     } else {
       // KASUS KHUSUS (5–7 pemain): Tim pemenang capai batas streak, tetapi antrean kurang dari 4 orang!
-      // Ambil seluruh antrean yang menunggu, lalu lengkapi kekurangannya dari tim yang baru keluar
-      // (prioritaskan yang paling sedikit main & dari tim kalah dulu agar adil).
+      // Tim yang sudah mencapai batas menang beruntun WAJIB keluar lebih dulu ke antrean!
+      // Ambil seluruh antrean yang menunggu, lalu lengkapi kekurangannya dari tim kalah dulu
+      // (baru ambil dari tim pemenang jika antrean hanya 1 orang / total 5 pemain).
       const needFromCourt = 4 - waitingQueue.length;
-      const kandidatDariLapangan = urutkanPrioritasKeadilan(
-        [...loserActive, ...winnerActive],
-        playerMap
-      );
-      const bertahanUntukLengkapi = kandidatDariLapangan.slice(0, needFromCourt);
-      const keluarKeAntrean = kandidatDariLapangan.slice(needFromCourt);
+      const loserTerurut = urutkanPrioritasKeadilan(loserActive, playerMap);
+      const winnerTerurut = urutkanPrioritasKeadilan(winnerActive, playerMap);
+      const poolDariLapangan = [...loserTerurut, ...winnerTerurut];
+
+      const bertahanUntukLengkapi = poolDariLapangan.slice(0, needFromCourt);
+      const keluarKeAntrean = poolDariLapangan.slice(needFromCourt);
 
       const fourIn = [...waitingQueue, ...bertahanUntukLengkapi] as [
         string,
@@ -356,8 +357,19 @@ export function prosesRotasiSetelahPertandingan(
         string,
         string,
       ];
-      const { teamA, teamB } = bentukPasanganAdilDariEmpat(fourIn, recentPairKeys, false);
-      const namaBertahan = bertahanUntukLengkapi
+
+      // Untuk 5 pemain (1 antre): pasangkan pemain baru dengan 1 mantan pemenang vs tim kalah.
+      // Untuk 6-7 pemain: pasangkan pemain yang baru masuk dari antrean terlebih dahulu.
+      const teamA: [string, string] =
+        waitingQueue.length === 1 ? [fourIn[0], fourIn[3]] : [fourIn[0], fourIn[1]];
+      const teamB: [string, string] =
+        waitingQueue.length === 1 ? [fourIn[1], fourIn[2]] : [fourIn[2], fourIn[3]];
+
+      const namaMasuk = waitingQueue
+        .map((id) => playerMap.get(id)?.name ?? '')
+        .filter(Boolean)
+        .join(', ');
+      const namaKeluar = keluarKeAntrean
         .map((id) => playerMap.get(id)?.name ?? '')
         .filter(Boolean)
         .join(', ');
@@ -365,7 +377,7 @@ export function prosesRotasiSetelahPertandingan(
       return {
         nextMatch: buatPertandinganBaru(finishedMatch.courtNumber, teamA, teamB, null, 0),
         nextQueueIds: keluarKeAntrean,
-        alasanRotasi: `Tim pemenang sudah ${settings.maxConsecutiveWins}x menang beruntun, tetapi antrean hanya ${waitingQueue.length} orang. Semua pemain di antrean masuk ditambah ${namaBertahan} (main paling sedikit) agar tetap 2 vs 2.`,
+        alasanRotasi: `Tim pemenang sudah ${settings.maxConsecutiveWins}x menang beruntun dan harus ganti! ${namaKeluar} istirahat ke antrean, ${namaMasuk} masuk ke lapangan.`,
       };
     }
   }
@@ -430,9 +442,9 @@ export function prosesRotasiSetelahPertandingan(
       };
     }
   } else {
-    // KASUS KHUSUS 5 PEMAIN (atau antrean hanya tersisa 1 orang saat tim kalah keluar 2 orang):
-    // Gabungkan 1 pemain yang menunggu di antrean dengan 1 pemain dari tim yang kalah
-    // (pilih pemain dari tim kalah yang jumlah mainnya paling sedikit / paling lama istirahat).
+    // KASUS KHUSUS 5 PEMAIN (atau antrean hanya tersisa 1 orang saat tim kalah keluar):
+    // Tim menang tetap lanjut berpasangan. Dari tim yang kalah, 1 pemain dengan main terbanyak
+    // keluar ke antrean untuk digantikan pemain yang sedang menunggu di antrean.
     const challengersFromQueue = [...waitingQueue];
     const masihKurang = slotsNeeded - challengersFromQueue.length;
     const loserTerurutAdil = urutkanPrioritasKeadilan(loserActive, playerMap);
@@ -444,7 +456,7 @@ export function prosesRotasiSetelahPertandingan(
       .map((id) => playerMap.get(id)?.name ?? '')
       .filter(Boolean)
       .join(', ');
-    const namaGabung = dipilihDariTimKalah
+    const namaKeluar = keluarKeAntrean
       .map((id) => playerMap.get(id)?.name ?? '')
       .filter(Boolean)
       .join(', ');
@@ -454,6 +466,7 @@ export function prosesRotasiSetelahPertandingan(
       winnerActive.length === 2 &&
       penantangLengkap.length === 2
     ) {
+      const winnerNames = winnerActive.map((id) => playerMap.get(id)?.name).join(' & ');
       return {
         nextMatch: buatPertandinganBaru(
           finishedMatch.courtNumber,
@@ -463,7 +476,7 @@ export function prosesRotasiSetelahPertandingan(
           newWinStreak
         ),
         nextQueueIds: keluarKeAntrean,
-        alasanRotasi: `Antrean hanya ${challengersFromQueue.length} orang (${namaAntre}). Digabung dengan ${namaGabung} dari tim yang baru keluar (main paling sedikit) supaya tetap 2 vs 2.`,
+        alasanRotasi: `Tim pemenang (${winnerNames}) lanjut (${newWinStreak}/${settings.maxConsecutiveWins}). Dari tim kalah, ${namaKeluar} istirahat dan digantikan ${namaAntre} dari antrean.`,
       };
     }
 
@@ -472,7 +485,7 @@ export function prosesRotasiSetelahPertandingan(
     return {
       nextMatch: buatPertandinganBaru(finishedMatch.courtNumber, teamA, teamB, null, 0),
       nextQueueIds: keluarKeAntrean,
-      alasanRotasi: `Antrean hanya ${challengersFromQueue.length} orang (${namaAntre}). Digabung dengan ${namaGabung} agar genap 4 pemain (2 vs 2).`,
+      alasanRotasi: `${namaKeluar} (kalah) gantian keluar ke antrean dan digantikan ${namaAntre}.`,
     };
   }
 }

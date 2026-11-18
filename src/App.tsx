@@ -391,133 +391,186 @@ export default function App() {
     });
   };
 
+  const finalizeAndRotateMatch = (
+    prev: AppState,
+    finished: ActiveCourtMatch,
+    winner: 'A' | 'B'
+  ): AppState => {
+    const courtNumber = finished.courtNumber;
+    const now = Date.now();
+    const playerMap = new Map(prev.players.map((p) => [p.id, p]));
+
+    const teamANames = finished.teamAIds.map((id) => playerMap.get(id)?.name ?? '?');
+    const teamBNames = finished.teamBIds.map((id) => playerMap.get(id)?.name ?? '?');
+
+    const effectiveGameScores =
+      finished.completedGames.length > 0
+        ? finished.completedGames
+        : [{ scoreA: finished.scoreA, scoreB: finished.scoreB }];
+
+    const totalPointsA = effectiveGameScores.reduce((s, g) => s + g.scoreA, 0);
+    const totalPointsB = effectiveGameScores.reduce((s, g) => s + g.scoreB, 0);
+
+    const record: MatchRecord = {
+      id: `m_${now}_${courtNumber}`,
+      courtNumber,
+      timestamp: now,
+      durationSeconds: Math.max(1, Math.floor((now - finished.startedAt) / 1000)),
+      teamAIds: [...finished.teamAIds],
+      teamBIds: [...finished.teamBIds],
+      teamANames,
+      teamBNames,
+      finalScoreA: finished.scoreA,
+      finalScoreB: finished.scoreB,
+      gameScores: effectiveGameScores,
+      winner,
+      shuttlesUsed: finished.shuttleCountThisMatch,
+    };
+
+    const winnerSet = new Set(winner === 'A' ? finished.teamAIds : finished.teamBIds);
+    const loserSet = new Set(winner === 'A' ? finished.teamBIds : finished.teamAIds);
+
+    // Update statistik setiap pemain
+    const updatedPlayers = prev.players.map((p) => {
+      if (winnerSet.has(p.id)) {
+        const pts = finished.teamAIds.includes(p.id) ? totalPointsA : totalPointsB;
+        const nextStreak = p.currentStreak + 1;
+        return {
+          ...p,
+          gamesPlayedSession: p.gamesPlayedSession + 1,
+          winsSession: p.winsSession + 1,
+          pointsSession: p.pointsSession + pts,
+          currentStreak: nextStreak,
+          bestStreakSession: Math.max(p.bestStreakSession, nextStreak),
+          waitingSince: now,
+          allTimeGames: p.allTimeGames + 1,
+          allTimeWins: p.allTimeWins + 1,
+          allTimePoints: p.allTimePoints + pts,
+          allTimeBestStreak: Math.max(p.allTimeBestStreak, nextStreak),
+        };
+      }
+      if (loserSet.has(p.id)) {
+        const pts = finished.teamAIds.includes(p.id) ? totalPointsA : totalPointsB;
+        return {
+          ...p,
+          gamesPlayedSession: p.gamesPlayedSession + 1,
+          lossesSession: p.lossesSession + 1,
+          pointsSession: p.pointsSession + pts,
+          currentStreak: 0,
+          waitingSince: now,
+          allTimeGames: p.allTimeGames + 1,
+          allTimeLosses: p.allTimeLosses + 1,
+          allTimePoints: p.allTimePoints + pts,
+        };
+      }
+      return p;
+    });
+
+    // Update statistik duo
+    const nextDuoStats = { ...prev.duoStats };
+    const updateDuo = (pair: [string, string], won: boolean) => {
+      const key = buatKunciPasangan(pair[0], pair[1]);
+      const sortedIds: [string, string] =
+        pair[0] < pair[1] ? [pair[0], pair[1]] : [pair[1], pair[0]];
+      const cur = nextDuoStats[key] ?? { playerIds: sortedIds, games: 0, wins: 0 };
+      nextDuoStats[key] = {
+        playerIds: sortedIds,
+        games: cur.games + 1,
+        wins: cur.wins + (won ? 1 : 0),
+      };
+    };
+    updateDuo(finished.teamAIds, winner === 'A');
+    updateDuo(finished.teamBIds, winner === 'B');
+
+    const pairKeysNow = [
+      buatKunciPasangan(finished.teamAIds[0], finished.teamAIds[1]),
+      buatKunciPasangan(finished.teamBIds[0], finished.teamBIds[1]),
+    ];
+    const nextRecentPairKeys = [...prev.recentPairKeys, ...pairKeysNow].slice(-12);
+
+    const otherCourts = prev.courts.filter((c) => c.courtNumber !== courtNumber);
+    const rotation = prosesRotasiSetelahPertandingan(
+      finished,
+      winner,
+      updatedPlayers,
+      prev.queueIds,
+      otherCourts,
+      prev.rotationSettings,
+      nextRecentPairKeys
+    );
+
+    const nextCourts = rotation.nextMatch
+      ? [...otherCourts, rotation.nextMatch].sort((a, b) => a.courtNumber - b.courtNumber)
+      : otherCourts;
+
+    const nextMatchCount = prev.matchHistory.length + 1;
+    const targetMatches = prev.rotationSettings.targetSessionMatches;
+    if (targetMatches !== null && nextMatchCount === targetMatches) {
+      setTimeout(() => {
+        playAlertChime();
+        setRentalAlertBanner(`Target ${targetMatches} pertandingan sesi telah tercapai!`);
+      }, 0);
+    }
+
+    return {
+      ...prev,
+      players: updatedPlayers,
+      matchHistory: [...prev.matchHistory, record],
+      duoStats: nextDuoStats,
+      recentPairKeys: nextRecentPairKeys,
+      courts: nextCourts,
+      queueIds: rotation.nextQueueIds,
+      lastRotationNote: rotation.alasanRotasi,
+    };
+  };
+
   const handleFinishAndRotate = (courtNumber: 1 | 2) => {
     setState((prev) => {
       const finished = prev.courts.find((c) => c.courtNumber === courtNumber);
       if (!finished || !finished.winner) return prev;
+      return finalizeAndRotateMatch(prev, finished, finished.winner);
+    });
+  };
 
-      const winner = finished.winner;
-      const now = Date.now();
-      const playerMap = new Map(prev.players.map((p) => [p.id, p]));
+  const handleDeclareWinner = (
+    courtNumber: 1 | 2,
+    winner: 'A' | 'B',
+    scoreA?: number,
+    scoreB?: number,
+    autoRecap = false
+  ) => {
+    setState((prev) => {
+      const target = prev.courts.find((c) => c.courtNumber === courtNumber);
+      if (!target) return prev;
 
-      const teamANames = finished.teamAIds.map((id) => playerMap.get(id)?.name ?? '?');
-      const teamBNames = finished.teamBIds.map((id) => playerMap.get(id)?.name ?? '?');
+      let nextScoreA = scoreA ?? target.scoreA;
+      let nextScoreB = scoreB ?? target.scoreB;
 
-      const totalPointsA = finished.completedGames.reduce((s, g) => s + g.scoreA, 0);
-      const totalPointsB = finished.completedGames.reduce((s, g) => s + g.scoreB, 0);
+      // Jika pemenang dinyatakan tanpa angka dan skor pemenang masih <= lawan, sesuaikan agar valid
+      if (scoreA === undefined && scoreB === undefined) {
+        if (winner === 'A' && nextScoreA <= nextScoreB) {
+          nextScoreA = Math.max(prev.scoringSettings.targetPoints, nextScoreB + 2);
+        } else if (winner === 'B' && nextScoreB <= nextScoreA) {
+          nextScoreB = Math.max(prev.scoringSettings.targetPoints, nextScoreA + 2);
+        }
+      }
 
-      const record: MatchRecord = {
-        id: `m_${now}_${courtNumber}`,
-        courtNumber,
-        timestamp: now,
-        durationSeconds: Math.max(1, Math.floor((now - finished.startedAt) / 1000)),
-        teamAIds: [...finished.teamAIds],
-        teamBIds: [...finished.teamBIds],
-        teamANames,
-        teamBNames,
-        finalScoreA: finished.scoreA,
-        finalScoreB: finished.scoreB,
-        gameScores:
-          finished.completedGames.length > 0
-            ? finished.completedGames
-            : [{ scoreA: finished.scoreA, scoreB: finished.scoreB }],
+      const updatedMatch: ActiveCourtMatch = {
+        ...target,
+        scoreA: nextScoreA,
+        scoreB: nextScoreB,
         winner,
-        shuttlesUsed: finished.shuttleCountThisMatch,
+        undoStack: [...target.undoStack, createScoreSnapshot(target)],
       };
 
-      const winnerSet = new Set(winner === 'A' ? finished.teamAIds : finished.teamBIds);
-      const loserSet = new Set(winner === 'A' ? finished.teamBIds : finished.teamAIds);
-
-      // Update statistik setiap pemain
-      const updatedPlayers = prev.players.map((p) => {
-        if (winnerSet.has(p.id)) {
-          const pts = finished.teamAIds.includes(p.id) ? totalPointsA : totalPointsB;
-          const nextStreak = p.currentStreak + 1;
-          return {
-            ...p,
-            gamesPlayedSession: p.gamesPlayedSession + 1,
-            winsSession: p.winsSession + 1,
-            pointsSession: p.pointsSession + pts,
-            currentStreak: nextStreak,
-            bestStreakSession: Math.max(p.bestStreakSession, nextStreak),
-            allTimeGames: p.allTimeGames + 1,
-            allTimeWins: p.allTimeWins + 1,
-            allTimePoints: p.allTimePoints + pts,
-            allTimeBestStreak: Math.max(p.allTimeBestStreak, nextStreak),
-          };
-        }
-        if (loserSet.has(p.id)) {
-          const pts = finished.teamAIds.includes(p.id) ? totalPointsA : totalPointsB;
-          return {
-            ...p,
-            gamesPlayedSession: p.gamesPlayedSession + 1,
-            lossesSession: p.lossesSession + 1,
-            pointsSession: p.pointsSession + pts,
-            currentStreak: 0,
-            waitingSince: now,
-            allTimeGames: p.allTimeGames + 1,
-            allTimeLosses: p.allTimeLosses + 1,
-            allTimePoints: p.allTimePoints + pts,
-          };
-        }
-        return p;
-      });
-
-      // Update statistik duo
-      const nextDuoStats = { ...prev.duoStats };
-      const updateDuo = (pair: [string, string], won: boolean) => {
-        const key = buatKunciPasangan(pair[0], pair[1]);
-        const sortedIds: [string, string] =
-          pair[0] < pair[1] ? [pair[0], pair[1]] : [pair[1], pair[0]];
-        const cur = nextDuoStats[key] ?? { playerIds: sortedIds, games: 0, wins: 0 };
-        nextDuoStats[key] = {
-          playerIds: sortedIds,
-          games: cur.games + 1,
-          wins: cur.wins + (won ? 1 : 0),
-        };
-      };
-      updateDuo(finished.teamAIds, winner === 'A');
-      updateDuo(finished.teamBIds, winner === 'B');
-
-      const pairKeysNow = [
-        buatKunciPasangan(finished.teamAIds[0], finished.teamAIds[1]),
-        buatKunciPasangan(finished.teamBIds[0], finished.teamBIds[1]),
-      ];
-      const nextRecentPairKeys = [...prev.recentPairKeys, ...pairKeysNow].slice(-12);
-
-      const otherCourts = prev.courts.filter((c) => c.courtNumber !== courtNumber);
-      const rotation = prosesRotasiSetelahPertandingan(
-        finished,
-        winner,
-        updatedPlayers,
-        prev.queueIds,
-        otherCourts,
-        prev.rotationSettings,
-        nextRecentPairKeys
-      );
-
-      const nextCourts = rotation.nextMatch
-        ? [...otherCourts, rotation.nextMatch].sort((a, b) => a.courtNumber - b.courtNumber)
-        : otherCourts;
-
-      const nextMatchCount = prev.matchHistory.length + 1;
-      const targetMatches = prev.rotationSettings.targetSessionMatches;
-      if (targetMatches !== null && nextMatchCount === targetMatches) {
-        setTimeout(() => {
-          playAlertChime();
-          setRentalAlertBanner(`Target ${targetMatches} pertandingan sesi telah tercapai!`);
-        }, 0);
+      if (autoRecap) {
+        return finalizeAndRotateMatch(prev, updatedMatch, winner);
       }
 
       return {
         ...prev,
-        players: updatedPlayers,
-        matchHistory: [...prev.matchHistory, record],
-        duoStats: nextDuoStats,
-        recentPairKeys: nextRecentPairKeys,
-        courts: nextCourts,
-        queueIds: rotation.nextQueueIds,
-        lastRotationNote: rotation.alasanRotasi,
+        courts: prev.courts.map((c) => (c.courtNumber === courtNumber ? updatedMatch : c)),
+        lastRotationNote: `Tim ${winner} dinyatakan menang (${nextScoreA}-${nextScoreB}). Siap direkap.`,
       };
     });
   };
@@ -1078,6 +1131,7 @@ export default function App() {
             onSwapCourtSides={handleSwapCourtSides}
             onSetCustomScore={handleSetCustomScore}
             onResetScore={handleResetCourtScore}
+            onDeclareWinner={handleDeclareWinner}
             onFinishAndRotate={handleFinishAndRotate}
             onShuffleCurrentCourt={handleShuffleCurrentCourt}
             onManualSetLineup={handleManualSetCourtLineup}
@@ -1101,6 +1155,8 @@ export default function App() {
         {activeTab === 'pemain' && (
           <PlayersTab
             players={state.players}
+            matchHistory={state.matchHistory}
+            allTimeMatchHistory={state.allTimeMatchHistory}
             savedGroup={state.savedGroup}
             onCourtPlayerIds={onCourtPlayerIds}
             currentCourtMatch={state.courts[0] ?? null}

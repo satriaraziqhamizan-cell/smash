@@ -955,9 +955,14 @@ export const MoreTab: React.FC<MoreTabProps> = ({
         </div>
 
         <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
-          <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">
-            Kata Kunci Perintah Suara (Pisahkan dengan koma)
-          </h3>
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">
+              Kata Kunci Perintah Suara (Pisahkan dengan koma)
+            </h3>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+              Selain +1 poin, sebut skor langsung atau rekap: &ldquo;tim A 10 tim B 8&rdquo;, &ldquo;10 sama&rdquo;, &ldquo;tim A menang&rdquo;, &ldquo;tim A menang 21 15 rekap&rdquo;, &ldquo;rekap&rdquo;, atau &ldquo;reset skor&rdquo;.
+            </p>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <label className="space-y-1">
               <span className="text-zinc-500 dark:text-zinc-400">Tambah Tim A (+1)</span>

@@ -5,6 +5,7 @@ import {
   Copy,
   Download,
   FileSpreadsheet,
+  History,
   Image as ImageIcon,
   Loader2,
   MessageSquareText,
@@ -23,6 +24,7 @@ import {
   generateWhatsAppSummary,
 } from '../utils/storage';
 import { PlayerAvatar } from './PlayerAvatar';
+import { PlayerHistoryModal } from './PlayerHistoryModal';
 
 interface StatsTabProps {
   state: AppState;
@@ -41,6 +43,8 @@ export const StatsTab: React.FC<StatsTabProps> = ({
   const [copiedWA, setCopiedWA] = useState(false);
   const [showRecapCard, setShowRecapCard] = useState(false);
   const [showResetCountsModal, setShowResetCountsModal] = useState(false);
+  const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
+  const [matchFilterPlayerId, setMatchFilterPlayerId] = useState<string>('all');
 
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
@@ -113,8 +117,31 @@ export const StatsTab: React.FC<StatsTabProps> = ({
       scope === 'session'
         ? state.matchHistory
         : [...state.allTimeMatchHistory, ...state.matchHistory];
-    return [...list].reverse();
-  }, [scope, state.matchHistory, state.allTimeMatchHistory]);
+    const filtered =
+      matchFilterPlayerId === 'all'
+        ? list
+        : list.filter(
+            (m) =>
+              m.teamAIds.includes(matchFilterPlayerId) ||
+              m.teamBIds.includes(matchFilterPlayerId)
+          );
+    return [...filtered].reverse();
+  }, [scope, state.matchHistory, state.allTimeMatchHistory, matchFilterPlayerId]);
+
+  const historyPlayer = useMemo(
+    () => state.players.find((p) => p.id === historyPlayerId) ?? null,
+    [state.players, historyPlayerId]
+  );
+
+  const filteredPlayerSummary = useMemo(() => {
+    if (matchFilterPlayerId === 'all') return null;
+    const p = playerMap.get(matchFilterPlayerId);
+    if (!p) return null;
+    const games = scope === 'session' ? p.gamesPlayedSession : p.allTimeGames;
+    const wins = scope === 'session' ? p.winsSession : p.allTimeWins;
+    const losses = scope === 'session' ? p.lossesSession : p.allTimeLosses;
+    return { name: p.name, games, wins, losses };
+  }, [matchFilterPlayerId, playerMap, scope]);
 
   const handleCopyWhatsApp = async () => {
     const text = generateWhatsAppSummary(state);
@@ -377,12 +404,17 @@ export const StatsTab: React.FC<StatsTabProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* LEADERBOARD */}
         <section className="lg:col-span-7 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/90 dark:border-zinc-800 overflow-hidden">
-          <div className="p-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-            <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-              <Trophy className="w-4 h-4 text-amber-600" />
-              Leaderboard {scope === 'session' ? 'Sesi Ini' : 'Semua Sesi'}
-            </h2>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          <div className="p-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-amber-600" />
+                Leaderboard {scope === 'session' ? 'Sesi Ini' : 'Semua Sesi'}
+              </h2>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Ketuk pemain untuk lihat histori lengkap &amp; total main
+              </p>
+            </div>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
               {leaderboard.length} Pemain
             </span>
           </div>
@@ -402,7 +434,11 @@ export const StatsTab: React.FC<StatsTabProps> = ({
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800 text-sm">
                 {leaderboard.map((p, idx) => (
-                  <tr key={p.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                  <tr
+                    key={p.id}
+                    onClick={() => setHistoryPlayerId(p.id)}
+                    className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer transition"
+                  >
                     <td className="py-3 pl-4 pr-2 font-mono-tabular font-semibold text-zinc-400">
                       {idx + 1}
                     </td>
@@ -414,13 +450,13 @@ export const StatsTab: React.FC<StatsTabProps> = ({
                           avatarColor={p.avatarColor}
                           size="xs"
                         />
-                        <span className="font-semibold text-zinc-900 dark:text-white truncate max-w-[120px]">
+                        <span className="font-semibold text-zinc-900 dark:text-white truncate max-w-[120px] underline-offset-2 hover:underline">
                           {p.name}
                         </span>
                       </div>
                     </td>
-                    <td className="py-3 px-2 text-right font-mono-tabular text-zinc-700 dark:text-zinc-300">
-                      {p.games}
+                    <td className="py-3 px-2 text-right font-mono-tabular font-semibold text-zinc-900 dark:text-white">
+                      {p.games}x
                     </td>
                     <td className="py-3 px-2 text-right font-mono-tabular text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
                       {p.wins}-{p.losses}
@@ -496,9 +532,41 @@ export const StatsTab: React.FC<StatsTabProps> = ({
           </section>
 
           <section className="rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/90 dark:border-zinc-800 p-4 space-y-3">
-            <h2 className="text-base font-bold text-zinc-900 dark:text-white">
-              Riwayat Pertandingan ({displayedMatches.length})
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-zinc-500" />
+                Riwayat Pertandingan ({displayedMatches.length})
+              </h2>
+              {state.players.length > 0 && (
+                <select
+                  value={matchFilterPlayerId}
+                  onChange={(e) => setMatchFilterPlayerId(e.target.value)}
+                  aria-label="Filter histori berdasarkan pemain"
+                  className="min-h-[36px] rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 px-2.5 text-xs font-semibold text-zinc-800 dark:text-zinc-200"
+                >
+                  <option value="all">Semua Pemain</option>
+                  {state.players.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} (Main {scope === 'session' ? p.gamesPlayedSession : p.allTimeGames}x)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            {filteredPlayerSummary && (
+              <div className="rounded-lg bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-3 py-2 flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                  {filteredPlayerSummary.name} · Main {filteredPlayerSummary.games}x ({filteredPlayerSummary.wins}M - {filteredPlayerSummary.losses}K)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setHistoryPlayerId(matchFilterPlayerId)}
+                  className="font-semibold text-emerald-700 dark:text-emerald-400 hover:underline"
+                >
+                  Detail
+                </button>
+              </div>
+            )}
             {displayedMatches.length === 0 ? (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 Belum ada pertandingan yang selesai dicatat.
@@ -665,6 +733,13 @@ export const StatsTab: React.FC<StatsTabProps> = ({
           </div>
         </div>
       )}
+      <PlayerHistoryModal
+        player={historyPlayer}
+        sessionMatches={state.matchHistory}
+        allTimeMatches={state.allTimeMatchHistory}
+        initialScope={scope}
+        onClose={() => setHistoryPlayerId(null)}
+      />
     </div>
   );
 };

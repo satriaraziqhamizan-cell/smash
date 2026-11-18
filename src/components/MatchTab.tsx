@@ -65,6 +65,13 @@ interface MatchTabProps {
     gamesWonB: number
   ) => void;
   onResetScore: (courtNumber: 1 | 2) => void;
+  onDeclareWinner: (
+    courtNumber: 1 | 2,
+    winner: 'A' | 'B',
+    scoreA?: number,
+    scoreB?: number,
+    autoRecap?: boolean
+  ) => void;
   onFinishAndRotate: (courtNumber: 1 | 2) => void;
   onShuffleCurrentCourt: (courtNumber: 1 | 2) => void;
   onManualSetLineup: (
@@ -100,6 +107,7 @@ export const MatchTab: React.FC<MatchTabProps> = ({
   onSwapCourtSides,
   onSetCustomScore,
   onResetScore,
+  onDeclareWinner,
   onFinishAndRotate,
   onShuffleCurrentCourt,
   onManualSetLineup,
@@ -126,6 +134,8 @@ export const MatchTab: React.FC<MatchTabProps> = ({
   const [selectedCourtSwapId, setSelectedCourtSwapId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [sideSwitchBanner, setSideSwitchBanner] = useState(false);
+  const [voiceFeedback, setVoiceFeedback] = useState<string | null>(null);
+  const voiceFeedbackTimerRef = useRef<number | null>(null);
 
   const touchStartYRef = useRef<{ A: number | null; B: number | null }>({ A: null, B: null });
   const swipeHandledRef = useRef<{ A: boolean; B: boolean }>({ A: false, B: false });
@@ -205,13 +215,98 @@ export const MatchTab: React.FC<MatchTabProps> = ({
     speakIndonesian(announcement);
   }, [activeCourt, evaluation, playerMap, scoringSettings.ttsEnabled]);
 
+  const showVoiceStatus = (msg: string) => {
+    setVoiceFeedback(msg);
+    if (voiceFeedbackTimerRef.current) {
+      window.clearTimeout(voiceFeedbackTimerRef.current);
+    }
+    voiceFeedbackTimerRef.current = window.setTimeout(() => {
+      setVoiceFeedback(null);
+    }, 4000);
+  };
+
   const handleVoiceAction = (action: VoiceAction) => {
     if (!activeCourt) return;
-    if (action === 'pointA') onScorePoint(activeCourt.courtNumber, 'A');
-    else if (action === 'pointB') onScorePoint(activeCourt.courtNumber, 'B');
-    else if (action === 'minusA') onDecrementPoint(activeCourt.courtNumber, 'A');
-    else if (action === 'minusB') onDecrementPoint(activeCourt.courtNumber, 'B');
-    else if (action === 'undo') onUndoScore(activeCourt.courtNumber);
+    switch (action.type) {
+      case 'pointA':
+        onScorePoint(activeCourt.courtNumber, 'A');
+        showVoiceStatus('Skor Tim A +1');
+        break;
+      case 'pointB':
+        onScorePoint(activeCourt.courtNumber, 'B');
+        showVoiceStatus('Skor Tim B +1');
+        break;
+      case 'minusA':
+        onDecrementPoint(activeCourt.courtNumber, 'A');
+        showVoiceStatus('Skor Tim A -1');
+        break;
+      case 'minusB':
+        onDecrementPoint(activeCourt.courtNumber, 'B');
+        showVoiceStatus('Skor Tim B -1');
+        break;
+      case 'undo':
+        onUndoScore(activeCourt.courtNumber);
+        showVoiceStatus('Undo poin terakhir');
+        break;
+      case 'resetScore':
+        onResetScore(activeCourt.courtNumber);
+        showVoiceStatus('Skor direset ke 0 - 0');
+        break;
+      case 'setScores': {
+        const nextA = action.scoreA ?? activeCourt.scoreA;
+        const nextB = action.scoreB ?? activeCourt.scoreB;
+        onSetCustomScore(
+          activeCourt.courtNumber,
+          nextA,
+          nextB,
+          activeCourt.gamesWonA,
+          activeCourt.gamesWonB
+        );
+        showVoiceStatus(`Skor diubah menjadi ${nextA} - ${nextB}`);
+        break;
+      }
+      case 'declareWinner': {
+        onDeclareWinner(
+          activeCourt.courtNumber,
+          action.winner,
+          action.scoreA,
+          action.scoreB,
+          action.autoRecap
+        );
+        if (action.autoRecap) {
+          showVoiceStatus(`Tim ${action.winner} menang & pertandingan direkap!`);
+          if (scoringSettings.ttsEnabled) {
+            speakIndonesian(`Tim ${action.winner} menang dan pertandingan direkap. Lanjut pertandingan berikutnya.`);
+          }
+        } else {
+          showVoiceStatus(`Tim ${action.winner} menang! Sebut "Rekap" untuk lanjut.`);
+        }
+        break;
+      }
+      case 'recapMatch': {
+        if (activeCourt.winner) {
+          onFinishAndRotate(activeCourt.courtNumber);
+          showVoiceStatus('Pertandingan direkap & lanjut match berikutnya.');
+          if (scoringSettings.ttsEnabled) {
+            speakIndonesian('Pertandingan direkap. Lanjut pertandingan berikutnya.');
+          }
+        } else if (activeCourt.scoreA !== activeCourt.scoreB) {
+          const leading = activeCourt.scoreA > activeCourt.scoreB ? 'A' : 'B';
+          onDeclareWinner(activeCourt.courtNumber, leading, undefined, undefined, true);
+          showVoiceStatus(`Tim ${leading} menang (${activeCourt.scoreA}-${activeCourt.scoreB}) & langsung direkap!`);
+          if (scoringSettings.ttsEnabled) {
+            speakIndonesian(`Tim ${leading} menang dan pertandingan direkap.`);
+          }
+        } else {
+          const msg = `Skor masih seri (${activeCourt.scoreA}-${activeCourt.scoreB}). Sebut "Tim A menang" atau "Tim B menang" dulu.`;
+          showVoiceStatus(msg);
+          if (scoringSettings.ttsEnabled) {
+            speakIndonesian('Skor masih seri. Sebut tim yang menang dulu.');
+          }
+        }
+        break;
+      }
+    }
   };
 
   const voice = useVoiceControl(voiceSettings, handleVoiceAction);
@@ -762,22 +857,29 @@ export const MatchTab: React.FC<MatchTabProps> = ({
                 </div>
               </div>
 
-              {(voice.isListening || voice.errorMsg) && (
-                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs">
+              {(voice.isListening || voice.errorMsg || voiceFeedback) && (
+                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs space-y-1">
+                  {voiceFeedback && (
+                    <div className="font-semibold text-emerald-700 dark:text-emerald-400">
+                      {voiceFeedback}
+                    </div>
+                  )}
                   {voice.errorMsg ? (
                     <span className="text-rose-600 font-medium">{voice.errorMsg}</span>
                   ) : (
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-zinc-600 dark:text-zinc-300">
-                      <span>
-                        Mendengarkan (id-ID): &ldquo;{voiceSettings.pointAKeywords[0]}&rdquo;, &ldquo;
-                        {voiceSettings.pointBKeywords[0]}&rdquo;, &ldquo;{voiceSettings.undoKeywords[0]}&rdquo;
-                      </span>
-                      {voice.lastTranscript && (
-                        <span className="font-semibold text-zinc-900 dark:text-white">
-                          &ldquo;{voice.lastTranscript}&rdquo;
+                    voice.isListening && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-zinc-600 dark:text-zinc-300">
+                        <span>
+                          Mendengarkan (id-ID): &ldquo;{voiceSettings.pointAKeywords[0]}&rdquo;, &ldquo;
+                          {voiceSettings.pointBKeywords[0]}&rdquo;, &ldquo;tim A 10 tim B 8&rdquo;, &ldquo;10 sama&rdquo;, &ldquo;tim A menang&rdquo;, &ldquo;rekap&rdquo;, &ldquo;reset skor&rdquo;
                         </span>
-                      )}
-                    </div>
+                        {voice.lastTranscript && (
+                          <span className="font-semibold text-zinc-900 dark:text-white">
+                            &ldquo;{voice.lastTranscript}&rdquo;
+                          </span>
+                        )}
+                      </div>
+                    )
                   )}
                 </div>
               )}
@@ -1038,6 +1140,11 @@ export const MatchTab: React.FC<MatchTabProps> = ({
                     Reset Skor 0 - 0
                   </button>
                 </div>
+                {voice.isListening && (
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium pt-1">
+                    Suara aktif: katakan &ldquo;Rekap&rdquo; atau &ldquo;Lanjut&rdquo; untuk simpan &amp; rotasi.
+                  </p>
+                )}
               </div>
             </motion.div>
           </motion.div>
