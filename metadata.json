@@ -1,0 +1,10 @@
+{
+  "name": "SmashBoard",
+  "description": "Aplikasi web mobile-first untuk mengelola skor, daftar hadir pemain, dan rotasi antrean badminton santai (mabar) di lapangan.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
